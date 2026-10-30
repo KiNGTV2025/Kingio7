@@ -41,6 +41,13 @@ object Cleaner {
         return "RAM: ${mi.availMem shr 20} MB boş / ${mi.totalMem shr 20} MB"
     }
 
+    /** (boş MB, toplam MB) */
+    fun memMb(c: Context): Pair<Long, Long> {
+        val mi = ActivityManager.MemoryInfo()
+        (c.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(mi)
+        return Pair(mi.availMem shr 20, mi.totalMem shr 20)
+    }
+
     @Suppress("DEPRECATION")
     fun hasUsageAccess(c: Context): Boolean {
         val ops = c.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
@@ -84,17 +91,18 @@ object Cleaner {
 
     // ---- Kapatma ----
     /** Sadece arkaplan sürecini öldürür (ekransız, sessiz). */
-    fun softKill(c: Context, pkgs: List<String>) {
+    fun softKill(c: Context, pkgs: List<String>, mark: Boolean = true) {
         val am = c.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val ed = killedPrefs(c).edit()
         val now = System.currentTimeMillis()
-        pkgs.forEach { ed.putLong(it, now); am.killBackgroundProcesses(it) }
+        pkgs.forEach { if (mark) ed.putLong(it, now); am.killBackgroundProcesses(it) }
         ed.apply()
     }
 
     /** softKill + servis açıksa Ayarlar'dan zorla durdur. Servis varsa true döner. */
     fun stop(c: Context, pkgs: List<String>, backToApp: Boolean): Boolean {
-        softKill(c, pkgs)
-        return ForceStopService.enqueue(pkgs, backToApp)
+        val svc = ForceStopService.instance != null
+        softKill(c, pkgs, svc)   // servis yoksa "kapandı" diye gizleme
+        return svc && ForceStopService.enqueue(pkgs, backToApp)
     }
 }

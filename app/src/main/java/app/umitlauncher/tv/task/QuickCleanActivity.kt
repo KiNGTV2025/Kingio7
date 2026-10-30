@@ -23,7 +23,7 @@ class QuickCleanActivity : Activity() {
             val full = Cleaner.stop(this, targets, false)
             Toast.makeText(
                 this,
-                if (full) "${targets.size} uygulama kapatılıyor…" else "${targets.size} uygulama kapatıldı (hafif mod) • " + Cleaner.mem(this),
+                if (full) "${targets.size} uygulama kapatılıyor…" else "${targets.size} uygulama için hafif kapatma denendi; tam kapanması için Servis (Erişilebilirlik) açık olmalı • " + Cleaner.mem(this),
                 Toast.LENGTH_LONG
             ).show()
         }

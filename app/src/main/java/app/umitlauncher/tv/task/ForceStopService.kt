@@ -56,7 +56,7 @@ class ForceStopService : AccessibilityService() {
             if (!Cleaner.hasUsageAccess(this)) return
             val keep = Cleaner.keep(this)
             val l = Cleaner.candidates(this).map { it.pkg }.filter { it !in keep }
-            if (l.isNotEmpty()) Cleaner.softKill(this, l)
+            if (l.isNotEmpty()) Cleaner.softKill(this, l, false)
         } catch (_: Exception) {}
     }
 
