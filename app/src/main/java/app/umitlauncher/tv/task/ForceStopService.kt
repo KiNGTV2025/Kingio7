@@ -1,26 +1,32 @@
 package app.umitlauncher.tv.task
 
 import android.accessibilityservice.AccessibilityService
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.Toast
 import java.util.LinkedList
 
-/** Ayarlar > Uygulama bilgisi ekranını açıp "Zorla durdur" + onay butonuna basar. */
+/** Ayarlar > Uygulama bilgisi ekranından "Zorla durdur" yapar + otomatik temizlik (ekran kapanınca / saatlik). */
 class ForceStopService : AccessibilityService() {
 
     companion object {
         @Volatile var instance: ForceStopService? = null
+        @Volatile private var backToApp = true
         private val queue = LinkedList<String>()
         private val STOP = listOf("Zorla durdur", "Durmaya zorla", "Force stop", "Force Stop")
-        private val OK = listOf("Tamam", "OK", "Zorla durdur", "Durmaya zorla", "Force stop")
+        private const val INTERVAL = 2 * 3600 * 1000L
 
-        fun enqueue(pkgs: List<String>): Boolean {
+        fun enqueue(pkgs: List<String>, back: Boolean): Boolean {
             val s = instance ?: return false
+            backToApp = back
             synchronized(queue) { pkgs.forEach { if (!queue.contains(it)) queue.add(it) } }
             s.h.post { s.next() }
             return true
@@ -32,14 +38,48 @@ class ForceStopService : AccessibilityService() {
     private var step = 0
     private val timeout = Runnable { finishCurrent() }
 
-    override fun onServiceConnected() { instance = this }
-    override fun onUnbind(intent: Intent?): Boolean { instance = null; return super.onUnbind(intent) }
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context, i: Intent) {
+            if (i.action == Intent.ACTION_SCREEN_OFF && (Cleaner.auto(c) and 1) != 0) autoClean()
+        }
+    }
+    private val tick = object : Runnable {
+        override fun run() {
+            if ((Cleaner.auto(this@ForceStopService) and 2) != 0) autoClean()
+            h.postDelayed(this, INTERVAL)
+        }
+    }
+
+    /** Otomatik temizlik sessiz çalışır (ekran açmaz): sadece arkaplan süreçlerini öldürür. */
+    private fun autoClean() {
+        try {
+            if (!Cleaner.hasUsageAccess(this)) return
+            val keep = Cleaner.keep(this)
+            val l = Cleaner.candidates(this).map { it.pkg }.filter { it !in keep }
+            if (l.isNotEmpty()) Cleaner.softKill(this, l)
+        } catch (_: Exception) {}
+    }
+
+    override fun onServiceConnected() {
+        instance = this
+        registerReceiver(screenReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
+        h.removeCallbacks(tick)
+        h.postDelayed(tick, INTERVAL)
+    }
+
+    override fun onUnbind(intent: Intent?): Boolean {
+        instance = null
+        h.removeCallbacksAndMessages(null)
+        try { unregisterReceiver(screenReceiver) } catch (_: Exception) {}
+        return super.onUnbind(intent)
+    }
+
     override fun onInterrupt() {}
 
     private fun next() {
         if (cur != null) return
         val p = synchronized(queue) { queue.poll() }
-        if (p == null) { returnToApp(); return }
+        if (p == null) { finishAll(); return }
         cur = p; step = 0
         try {
             startActivity(
@@ -59,11 +99,16 @@ class ForceStopService : AccessibilityService() {
         h.postDelayed({ next() }, 500)
     }
 
-    private fun returnToApp() {
-        startActivity(
-            Intent(this, TaskManagerActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
-        )
+    private fun finishAll() {
+        if (backToApp) {
+            startActivity(
+                Intent(this, TaskManagerActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+            )
+        } else {
+            performGlobalAction(GLOBAL_ACTION_HOME)
+            Toast.makeText(this, "Temizlendi • " + Cleaner.mem(this), Toast.LENGTH_LONG).show()
+        }
     }
 
     override fun onAccessibilityEvent(e: AccessibilityEvent?) {
