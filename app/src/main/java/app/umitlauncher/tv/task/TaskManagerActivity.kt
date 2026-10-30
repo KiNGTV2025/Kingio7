@@ -29,6 +29,18 @@ class TaskManagerActivity : Activity() {
     private lateinit var list: ListView
     private lateinit var info: TextView
     private lateinit var adapter: BaseAdapter
+    private val prefs by lazy { getSharedPreferences("killed", Context.MODE_PRIVATE) }
+    private val skip = setOf("com.google.android.gms", "com.google.android.gsf")
+
+    /** Önce arkaplan süreçlerini öldür, servis açıksa Ayarlar'dan "Zorla durdur" yap. */
+    private fun stop(pkgs: List<String>) {
+        val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        pkgs.forEach { markKilled(it); am.killBackgroundProcesses(it) }
+        if (!ForceStopService.enqueue(pkgs))
+            Toast.makeText(this, "Tam kapatma için 'Erişilebilirlik' butonundan servisi aç", Toast.LENGTH_LONG).show()
+    }
+
+    private fun markKilled(pkg: String) = prefs.edit().putLong(pkg, System.currentTimeMillis()).apply()
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
@@ -57,6 +69,7 @@ class TaskManagerActivity : Activity() {
         }
         bar.addView(btn("Tümünü Kapat") { killAll() })
         bar.addView(btn("Yenile") { refresh() })
+        bar.addView(btn("Erişilebilirlik") { runCatching { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) } })
 
         list = ListView(this).apply {
             divider = ColorDrawable(Color.parseColor("#22ffffff")); dividerHeight = 1
@@ -127,7 +140,10 @@ class TaskManagerActivity : Activity() {
             @Suppress("DEPRECATION")
             if (e.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND) last[e.packageName] = e.timeStamp
         }
-        last.entries.sortedByDescending { it.value }.forEach { found.add(it.key) }
+        // Kapatılanları, kapatıldıktan sonra tekrar açılana kadar gizle
+        last.entries.sortedByDescending { it.value }.forEach {
+            if (prefs.getLong(it.key, 0L) < it.value) found.add(it.key)
+        }
 
         // 2) Bazı TV kutularında çalışan süreçleri doğrudan döndürür
         val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
@@ -135,7 +151,7 @@ class TaskManagerActivity : Activity() {
 
         rows.clear()
         for (pkg in found) {
-            if (pkg == packageName || pkg in home) continue
+            if (pkg == packageName || pkg in home || pkg in skip) continue
             val ai = runCatching { pm.getApplicationInfo(pkg, 0) }.getOrNull() ?: continue
             val sys = ai.flags and ApplicationInfo.FLAG_SYSTEM != 0 && ai.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP == 0
             if (sys) continue
@@ -150,15 +166,14 @@ class TaskManagerActivity : Activity() {
     private fun killOne(pos: Int) {
         if (pos !in rows.indices) return
         val r = rows.removeAt(pos)
-        (getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).killBackgroundProcesses(r.pkg)
+        stop(listOf(r.pkg))
         adapter.notifyDataSetChanged()
         info.text = "${rows.size} uygulama  •  ${r.label} kapatıldı"
     }
 
     private fun killAll() {
-        val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val n = rows.size
-        rows.forEach { am.killBackgroundProcesses(it.pkg) }
+        stop(rows.map { it.pkg })
         rows.clear(); adapter.notifyDataSetChanged()
         info.text = "$n uygulama kapatıldı"
     }
