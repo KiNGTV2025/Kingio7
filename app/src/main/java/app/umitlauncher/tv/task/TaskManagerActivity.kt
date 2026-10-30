@@ -27,44 +27,58 @@ class TaskManagerActivity : Activity() {
     private lateinit var autoBtn: Button
     private lateinit var adapter: BaseAdapter
     private val ui = Handler(Looper.getMainLooper())
-    private val autoLabels = arrayOf("Oto: Kapalı", "Oto: Ekran kapanınca", "Oto: 2 saatte bir", "Oto: İkisi de")
+    private val autoLabels = arrayOf("Oto: Kapalı", "Oto: Ekran", "Oto: 2 saat", "Oto: Ekran+2s")
+
+    private var phone = false
+    private lateinit var empty: TextView
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
+        phone = resources.configuration.screenWidthDp < 600   // telefon (dikey) / dar ekran
         val dp = resources.displayMetrics.density
         fun px(v: Int) = (v * dp).toInt()
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.parseColor("#101014"))
-            setPadding(px(48), px(28), px(48), px(20))
+            if (phone) setPadding(px(16), px(12), px(16), px(8)) else setPadding(px(48), px(28), px(48), px(20))
         }
-        val title = TextView(this).apply { text = "Arkaplan Uygulamaları"; textSize = 28f; setTextColor(Color.WHITE) }
-        memTv = TextView(this).apply { textSize = 18f; setTextColor(Color.parseColor("#FFC72C")) }
-        info = TextView(this).apply { textSize = 15f; setTextColor(Color.parseColor("#9a9aa5")) }
+        val title = TextView(this).apply {
+            text = "Arkaplan Uygulamaları"; textSize = if (phone) 22f else 28f; setTextColor(Color.WHITE)
+        }
+        memTv = TextView(this).apply { textSize = if (phone) 15f else 18f; setTextColor(Color.parseColor("#FFC72C")) }
+        info = TextView(this).apply { textSize = if (phone) 13f else 15f; setTextColor(Color.parseColor("#9a9aa5")) }
 
         fun btn(t: String, a: () -> Unit) = Button(this).apply {
-            text = t; textSize = 16f; isFocusable = true; setOnClickListener { a() }
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-                .apply { rightMargin = px(12) }
+            text = t; textSize = if (phone) 14f else 16f; isAllCaps = false; maxLines = 1
+            isFocusable = true; setOnClickListener { a() }
         }
-        val bar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, px(10), 0, px(10)) }
-        bar.addView(btn("Tümünü Kapat") { killAll() })
-        bar.addView(btn("Yenile") { refresh() })
         hoursBtn = btn("") {
             val n = when (Cleaner.hours(this)) { 1 -> 6; 6 -> 24; else -> 1 }
             Cleaner.setHours(this, n); refresh()
         }
-        bar.addView(hoursBtn)
         autoBtn = btn("") {
             val n = (Cleaner.auto(this) + 1) % 4
             Cleaner.setAuto(this, n); autoBtn.text = autoLabels[n]
             if (n != 0 && ForceStopService.instance == null)
                 Toast.makeText(this, "Otomatik temizlik için Erişilebilirlik servisi açık olmalı", Toast.LENGTH_LONG).show()
         }
-        bar.addView(autoBtn)
-        bar.addView(btn("Erişilebilirlik") { runCatching { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) } })
-        val scroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(bar) }
+        val btns = listOf(
+            btn("Tümünü Kapat") { killAll() },
+            btn("Yenile") { refresh() },
+            hoursBtn, autoBtn,
+            btn("Erişilebilirlik") { runCatching { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) } }
+        )
+        // Telefonda 2'şerli satırlar, TV'de tek satır
+        val bars = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, px(8), 0, px(8)) }
+        btns.chunked(if (phone) 2 else btns.size).forEach { chunk ->
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            chunk.forEachIndexed { i, bt ->
+                row.addView(bt, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    .apply { if (i < chunk.size - 1) rightMargin = px(8) })
+            }
+            bars.addView(row)
+        }
 
         list = ListView(this).apply {
             divider = ColorDrawable(Color.parseColor("#22ffffff")); dividerHeight = 1
@@ -82,29 +96,45 @@ class TaskManagerActivity : Activity() {
                 val kept = r.pkg in keep
                 val h = LinearLayout(this@TaskManagerActivity).apply {
                     orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-                    setPadding(px(16), px(10), px(16), px(10))
+                    minimumHeight = px(if (phone) 60 else 72)
+                    setPadding(px(if (phone) 8 else 16), px(8), px(if (phone) 8 else 16), px(8))
                 }
+                val ic = if (phone) 40 else 48
                 h.addView(ImageView(this@TaskManagerActivity).apply {
                     runCatching { setImageDrawable(packageManager.getApplicationIcon(r.pkg)) }
-                    layoutParams = LinearLayout.LayoutParams(px(48), px(48))
+                    layoutParams = LinearLayout.LayoutParams(px(ic), px(ic))
                 })
                 val t = LinearLayout(this@TaskManagerActivity).apply {
-                    orientation = LinearLayout.VERTICAL; setPadding(px(16), 0, 0, 0)
+                    orientation = LinearLayout.VERTICAL; setPadding(px(if (phone) 12 else 16), 0, px(8), 0)
                     layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
                 }
-                t.addView(TextView(this@TaskManagerActivity).apply { text = r.label; textSize = 20f; setTextColor(Color.WHITE) })
-                t.addView(TextView(this@TaskManagerActivity).apply { text = r.pkg; textSize = 12f; setTextColor(Color.parseColor("#9a9aa5")) })
+                t.addView(TextView(this@TaskManagerActivity).apply {
+                    text = r.label; textSize = if (phone) 16f else 20f; setTextColor(Color.WHITE); maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                })
+                t.addView(TextView(this@TaskManagerActivity).apply {
+                    text = r.pkg; textSize = if (phone) 11f else 12f; setTextColor(Color.parseColor("#9a9aa5")); maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                })
                 h.addView(t)
                 if (kept) h.addView(TextView(this@TaskManagerActivity).apply {
-                    text = "KORUMALI"; textSize = 14f; setTextColor(Color.parseColor("#FFC72C"))
+                    text = if (phone) "KORUMALI" else "KORUMALI"; textSize = if (phone) 11f else 14f
+                    setTextColor(Color.parseColor("#FFC72C"))
                 })
                 return h
             }
         }
         list.adapter = adapter
+        empty = TextView(this).apply {
+            text = "Liste boş.\nDaha önce kapattıkların, tekrar açılana kadar gizlenir.\n'Süre'yi artırmayı dene."
+            textSize = 15f; setTextColor(Color.parseColor("#9a9aa5")); gravity = Gravity.CENTER
+            setPadding(px(16), px(40), px(16), 0)
+        }
 
-        root.addView(title); root.addView(memTv); root.addView(info); root.addView(scroll)
+        root.addView(title); root.addView(memTv); root.addView(info); root.addView(bars)
         root.addView(list, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(empty, LinearLayout.LayoutParams(-1, -2))
+        list.emptyView = empty
         setContentView(root)
         hoursBtn.text = "Süre: ${Cleaner.hours(this)} saat"
         autoBtn.text = autoLabels[Cleaner.auto(this)]
@@ -122,7 +152,9 @@ class TaskManagerActivity : Activity() {
 
     private fun status(extra: String? = null) {
         memTv.text = Cleaner.mem(this)
-        info.text = (extra ?: "${rows.size} uygulama") + "  •  OK: kapat  •  OK basılı/YEŞİL: koru  •  MENU/KIRMIZI: hepsini kapat"
+        val hint = if (phone) "Dokun: kapat  •  Basılı tut: koru"
+                   else "OK: kapat  •  OK basılı/YEŞİL: koru  •  MENU/KIRMIZI: hepsini kapat"
+        info.text = (extra ?: "${rows.size} uygulama") + "  •  " + hint
     }
 
     private fun refresh() {
